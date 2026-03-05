@@ -255,13 +255,23 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Avatar is missing");
     }
 
+    // Get current user
+    const user = await User.findById(req.user?._id);
+
+    // Delete old avatar from Cloudinary
+    if (user?.avatar) {
+        const publicId = user.avatar.split("/").pop().split(".")[0];
+        await cloudinary.uploader.destroy(publicId);
+    }
+
+
     const avatar = await uploadOnCloudinary(avatarLocalPath);
 
     if(!avatar.url){
         throw new ApiError(400, "Error while uploading avatar")
     }
 
-    const user = await User.findByIdAndUpdate(req.user?._id,
+    const updateUser = await User.findByIdAndUpdate(req.user?._id,
 
         {
             $set: {
@@ -273,7 +283,7 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
 
     return res
     .status(200)
-    .json(new ApiResponse(200, user, "Avatar Update Successfully"))
+    .json(new ApiResponse(200, updateUser, "Avatar Update Successfully"))
 })
 
 const updateUserCoverImage = asyncHandler(async (req, res) => {
@@ -282,13 +292,22 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
         throw new ApiError(400, "coverImage is missing");
     }
 
+    // Get current user
+    const user = await User.findById(req.user?._id);
+
+    // Delete old avatar from Cloudinary
+    if (user?.coverImage) {
+        const publicId = user.coverImage.split("/").pop().split(".")[0];
+        await cloudinary.uploader.destroy(publicId);
+    }
+
     const coverImage = await uploadOnCloudinary(coverImageLocalPath);
 
     if(!coverImage.url){
         throw new ApiError(400, "Error while uploading coverImage")
     }
 
-    const user = await User.findByIdAndUpdate(req.user?._id,
+    const updateUser = await User.findByIdAndUpdate(req.user?._id,
 
         {
             $set: {
@@ -300,7 +319,77 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
 
     return res
     .status(200)
-    .json(new ApiResponse(200, user, "coverImage Update Successfully"))
+    .json(new ApiResponse(200, updateUser, "coverImage Update Successfully"))
+})
+
+const getUserChannelProfile = asyncHandler(async(req, res) => {
+    const {username} = req.params;
+
+    if(!username?.trim()){
+        throw new ApiError(400, "username is missing")
+    }
+
+    const channel = await User.aggregate([
+        {
+            $match: {
+                username: username?.toLowerCase()
+            }
+        },
+        {
+            $lookup: {
+                from: "subscriptions",
+                localField: "_id",
+                foreignField: "channel",
+                as: "subscribers"
+            }
+        },
+        {
+            $lookup: {
+                from: "subscriptions",
+                localField: "_id",
+                foreignField: "subscriber",
+                as: "subscriberTo"
+            }
+        },
+        {
+            $addFields: {
+                subscriberCount: {
+                    $size: "$subscribers"
+                },
+                channelSubscribeToCount: {
+                    $size: "$subscriberTo"
+                },
+                isSubscribed: {
+                    $cond: {
+                        if: {$in: [req.user?._id, "$subscribers.subscriber"]},
+                        then: true,
+                        else: false
+                    }
+                }
+            }
+        },
+        {
+            $project: {
+                fullName: 1,
+                username: 1,
+                subscriberCount: 1,
+                channelSubscribeToCount: 1,
+                isSubscribed: 1,
+                avatar: 1,
+                coverImage: 1,
+                email: 1
+            }
+        }
+    ])
+
+    if(!channel?.length){
+        throw new ApiError(404, "channel not exists")
+    }
+
+    return res.status(200)
+    .json(
+        new ApiResponse(200, channel[0], "user channel fetched successfully")
+    )
 })
 
 export { 
@@ -312,5 +401,6 @@ export {
     getCurrentUser,
     updateAccountDetails,
     updateUserAvatar,
-    updateUserCoverImage
+    updateUserCoverImage,
+    getUserChannelProfile
 }
